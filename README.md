@@ -48,7 +48,8 @@ overlay, playtime tracking, and controller support for free.
    Play compatibility tool**, then pick **Proton Experimental** (or a recent
    numbered Proton, or GE-Proton if you have it installed in Steam).
 
-   Tested with Proton GE Latest --`Tempus Thales`
+   > Tested with Proton GE Latest 
+   --`Tempus Thales`
 
 4. **Rename and icon (optional).** On the same Properties screen, General tab,
    rename the entry to `SEED`. To set the icon, click the icon box on that
