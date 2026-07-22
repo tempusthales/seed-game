@@ -1,8 +1,8 @@
 #!/bin/bash
 #####################################################################################
 # Author: Tempus Thales
-# Version: 0.03
-# Date: 07/21/2026
+# Version: 0.05
+# Date: 07/22/2026
 # Description: Install and run seed.game on Linux under Proton via umu-launcher.
 #
 # Proton is not a drop-in for the wine binary. It expects Steam's environment and
@@ -18,6 +18,21 @@
 #####################################################################################
 # Changelog:
 #
+# 0.05 - 07/22/2026 - Full run logging to a timestamped file in the prefix dir
+#                   - Log opens with an environment header (OS, kernel, Proton
+#                     build, GAMEID, umu-run version) for later debugging
+#                   - Added -L to override the log path
+#
+# 0.04 - 07/22/2026 - Removed the umu-run empty-argument prefix step. Testing
+#                     showed umu treats "" as an executable path and fails with
+#                     "File not found" rather than creating the prefix and
+#                     exiting. umu builds the prefix as a side effect of running
+#                     a program, so the installer run now creates the prefix.
+#                   - Installer download and discovery moved ahead of the umu
+#                     call so there is a real program to run.
+#                   - Optional -d / -c winetricks steps moved to after the
+#                     installer, since the prefix does not exist until then.
+#
 # 0.03 - 07/21/2026 - Searches for an existing seed-launcher.exe before downloading
 #                   - Added -f to force a fresh download
 #                   - Discovery validates the MZ header, so a truncated or stale
@@ -32,7 +47,8 @@
 #                     page never reaches Proton
 #
 # 0.01 - 07/19/2026 - Initial version
-#                   - Prefix creation via umu-run with an empty executable argument
+#                   - Prefix creation attempted via umu-run empty argument
+#                     (removed in 0.04, see below)
 #                   - Optional .NET 4.5.2 install, off by default (see notes)
 #                   - Proton build selectable, defaults to GE-Proton
 #                   - Guards against stock Valve Proton when winetricks verbs are
@@ -42,6 +58,7 @@
 set -o pipefail
 
 SCRIPT_NAME="$(basename "$0")"
+SCRIPT_VERSION="0.05"
 
 # Version-agnostic endpoint. Always serves the current stable Windows x64 build.
 SEED_URL="https://launcher.seed.game/latest/stable/win/x64"
@@ -56,6 +73,7 @@ INSTALL_DOTNET=0
 INSTALL_COREFONTS=0
 KEEP_INSTALLER=0
 FORCE_DOWNLOAD=0
+LOG_PATH=""
 TMP_DIR=""
 
 usage() {
@@ -76,6 +94,7 @@ Options:
                     Default: $SEED_URL
   -k                Keep the downloaded installer in the prefix directory.
   -f                Force a fresh download, ignoring any local copy.
+  -L <path>         Write the run log to <path> instead of the prefix dir.
   -P <build>        Proton build. Path, version name, or codename.
                     Default: $PROTON_BUILD
   -g <gameid>       umu GAMEID for protonfixes lookup. Default: $GAME_ID
@@ -120,11 +139,12 @@ case "$1" in
         ;;
 esac
 
-while getopts ":u:kfP:g:dch" opt; do
+while getopts ":u:kfL:P:g:dch" opt; do
     case "$opt" in
         u) SEED_URL="$OPTARG" ;;
         k) KEEP_INSTALLER=1 ;;
         f) FORCE_DOWNLOAD=1 ;;
+        L) LOG_PATH="$OPTARG" ;;
         P) PROTON_BUILD="$OPTARG" ;;
         g) GAME_ID="$OPTARG" ;;
         d) INSTALL_DOTNET=1 ;;
@@ -167,6 +187,39 @@ export WINEPREFIX
 export PROTONPATH="$PROTON_BUILD"
 export GAMEID="$GAME_ID"
 
+# ---- Logging setup ----------------------------------------------------------
+# Capture the full run, script output plus umu/Proton output, to a timestamped
+# file. tee keeps it on screen while writing to disk. The redirect is placed
+# here, after the prefix path is known, so the log lands in the right spot;
+# everything printed from this point on is captured.
+
+if [ -z "$LOG_PATH" ]; then
+    mkdir -p "$WINEPREFIX" || die "Could not create $WINEPREFIX"
+    LOG_PATH="$WINEPREFIX/install-$(date +%Y%m%d-%H%M%S).log"
+fi
+
+# Header block: the environment details worth having when debugging later.
+{
+    echo "#############################################################"
+    echo "# seed.game Proton install log"
+    echo "# Script:   $SCRIPT_NAME v$SCRIPT_VERSION"
+    echo "# Date:     $(date '+%Y-%m-%d %H:%M:%S %Z')"
+    echo "# Prefix:   $WINEPREFIX"
+    echo "# Proton:   $PROTON_BUILD"
+    echo "# GAMEID:   $GAME_ID"
+    echo "# OS:       $(if . /etc/os-release 2>/dev/null && [ -n "$PRETTY_NAME" ]; then echo "$PRETTY_NAME"; else uname -s; fi)"
+    echo "# Kernel:   $(uname -r)"
+    echo "# umu-run:  $(umu-run --version 2>/dev/null | head -1 || echo 'unknown')"
+    echo "#############################################################"
+    echo ""
+} > "$LOG_PATH"
+
+# Route all subsequent stdout and stderr through tee to the log.
+exec > >(tee -a "$LOG_PATH") 2>&1
+
+echo "Logging to: $LOG_PATH"
+echo ""
+
 if [ -d "$WINEPREFIX" ]; then
     echo "Using existing prefix: $WINEPREFIX"
 else
@@ -175,35 +228,6 @@ fi
 
 echo "Proton build: $PROTON_BUILD"
 echo "Game ID:      $GAME_ID"
-echo ""
-
-# ---- Create the prefix ------------------------------------------------------
-# An empty executable argument tells umu to build the prefix and exit. The first
-# run also downloads the Proton build and Steam Linux Runtime if absent, which
-# takes a while on a cold cache.
-
-echo "Initializing prefix (first run downloads Proton and the runtime)..."
-umu-run "" || die "umu-run failed to create the prefix."
-
-# ---- Optional winetricks verbs ----------------------------------------------
-
-if [ "$INSTALL_DOTNET" -eq 1 ]; then
-    echo "Installing .NET Framework 4.5.2..."
-    umu-run winetricks -q --force dotnet452 || die "Failed to install .NET Framework 4.5.2."
-fi
-
-if [ "$INSTALL_COREFONTS" -eq 1 ]; then
-    echo "Installing Microsoft core fonts..."
-    umu-run winetricks -q corefonts || die "Failed to install corefonts."
-fi
-
-echo ""
-echo "Prefix ready."
-echo "  Prefix:  $WINEPREFIX"
-echo "  Proton:  $PROTON_BUILD"
-echo "  Game ID: $GAME_ID"
-[ "$INSTALL_DOTNET" -eq 1 ] && echo "  Extra:   .NET Framework 4.5.2"
-[ "$INSTALL_COREFONTS" -eq 1 ] && echo "  Extra:   Core Fonts"
 echo ""
 
 # ---- Installer discovery ----------------------------------------------------
@@ -299,11 +323,42 @@ else
 fi
 
 # ---- Run the installer ------------------------------------------------------
+# umu does not have a separate prefix-creation step. It builds the prefix as a
+# side effect of running a program, downloading Proton and the Steam Linux
+# Runtime on a cold cache. So running the installer here is also what creates
+# the prefix.
 
 echo ""
-echo "Launching installer under Proton..."
+echo "Launching installer under Proton (first run downloads Proton and the runtime)..."
 umu-run "$INSTALLER"
 STATUS=$?
+
+[ "$STATUS" -eq 0 ] || die "Installer exited with status $STATUS."
+
+echo ""
+echo "Prefix ready and installer finished."
+echo "  Prefix:  $WINEPREFIX"
+echo "  Proton:  $PROTON_BUILD"
+echo "  Game ID: $GAME_ID"
+
+# ---- Optional winetricks verbs ----------------------------------------------
+# These run after the installer because the prefix only exists once umu has run
+# a program. If the game needs .NET or fonts, they are applied to the completed
+# prefix here.
+
+if [ "$INSTALL_DOTNET" -eq 1 ]; then
+    echo ""
+    echo "Installing .NET Framework 4.5.2..."
+    umu-run winetricks -q --force dotnet452 || die "Failed to install .NET Framework 4.5.2."
+    echo "  Extra:   .NET Framework 4.5.2"
+fi
+
+if [ "$INSTALL_COREFONTS" -eq 1 ]; then
+    echo ""
+    echo "Installing Microsoft core fonts..."
+    umu-run winetricks -q corefonts || die "Failed to install corefonts."
+    echo "  Extra:   Core Fonts"
+fi
 
 if [ "$KEEP_INSTALLER" -eq 1 ]; then
     echo ""
