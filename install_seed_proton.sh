@@ -1,7 +1,7 @@
 #!/bin/bash
 #####################################################################################
 # Author: Tempus Thales
-# Version: 0.05
+# Version: 0.06
 # Date: 07/22/2026
 # Description: Install and run seed.game on Linux under Proton via umu-launcher.
 #
@@ -17,6 +17,10 @@
 # Credit: Wine version based on the original script shared by King Peky.
 #####################################################################################
 # Changelog:
+#
+# 0.06 - 07/22/2026 - Internal prefix variable renamed WINEPREFIX -> PROTONPREFIX
+#                     for clarity. The value is still exported as WINEPREFIX
+#                     because that is the variable umu and Proton read.
 #
 # 0.05 - 07/22/2026 - Full run logging to a timestamped file in the prefix dir
 #                   - Log opens with an environment header (OS, kernel, Proton
@@ -182,8 +186,13 @@ fi
 
 # ---- Resolve prefix path ----------------------------------------------------
 
-WINEPREFIX="$(realpath -m "$PREFIX_ARG")" || die "Could not resolve prefix path: $PREFIX_ARG"
-export WINEPREFIX
+PROTONPREFIX="$(realpath -m "$PREFIX_ARG")" || die "Could not resolve prefix path: $PREFIX_ARG"
+
+# umu and Proton read the prefix location from the WINEPREFIX environment
+# variable, the same name Wine uses. We export PROTONPREFIX's value under that
+# name so umu finds it, while the script itself refers to PROTONPREFIX for
+# clarity.
+export WINEPREFIX="$PROTONPREFIX"
 export PROTONPATH="$PROTON_BUILD"
 export GAMEID="$GAME_ID"
 
@@ -194,8 +203,8 @@ export GAMEID="$GAME_ID"
 # everything printed from this point on is captured.
 
 if [ -z "$LOG_PATH" ]; then
-    mkdir -p "$WINEPREFIX" || die "Could not create $WINEPREFIX"
-    LOG_PATH="$WINEPREFIX/install-$(date +%Y%m%d-%H%M%S).log"
+    mkdir -p "$PROTONPREFIX" || die "Could not create $PROTONPREFIX"
+    LOG_PATH="$PROTONPREFIX/install-$(date +%Y%m%d-%H%M%S).log"
 fi
 
 # Header block: the environment details worth having when debugging later.
@@ -204,7 +213,7 @@ fi
     echo "# seed.game Proton install log"
     echo "# Script:   $SCRIPT_NAME v$SCRIPT_VERSION"
     echo "# Date:     $(date '+%Y-%m-%d %H:%M:%S %Z')"
-    echo "# Prefix:   $WINEPREFIX"
+    echo "# Prefix:   $PROTONPREFIX"
     echo "# Proton:   $PROTON_BUILD"
     echo "# GAMEID:   $GAME_ID"
     echo "# OS:       $(if . /etc/os-release 2>/dev/null && [ -n "$PRETTY_NAME" ]; then echo "$PRETTY_NAME"; else uname -s; fi)"
@@ -220,10 +229,10 @@ exec > >(tee -a "$LOG_PATH") 2>&1
 echo "Logging to: $LOG_PATH"
 echo ""
 
-if [ -d "$WINEPREFIX" ]; then
-    echo "Using existing prefix: $WINEPREFIX"
+if [ -d "$PROTONPREFIX" ]; then
+    echo "Using existing prefix: $PROTONPREFIX"
 else
-    echo "Creating new prefix: $WINEPREFIX"
+    echo "Creating new prefix: $PROTONPREFIX"
 fi
 
 echo "Proton build: $PROTON_BUILD"
@@ -242,7 +251,7 @@ find_installer() {
 
     local candidates=(
         "./$name"
-        "$WINEPREFIX/$name"
+        "$PROTONPREFIX/$name"
         "$HOME/Downloads/$name"
         "$HOME/Desktop/$name"
         "$HOME/$name"
@@ -312,8 +321,8 @@ else
     else
         [ "$FORCE_DOWNLOAD" -eq 1 ] || echo "No local copy found."
         if [ "$KEEP_INSTALLER" -eq 1 ]; then
-            mkdir -p "$WINEPREFIX" || die "Could not create $WINEPREFIX"
-            INSTALLER="$WINEPREFIX/$INSTALLER_NAME"
+            mkdir -p "$PROTONPREFIX" || die "Could not create $PROTONPREFIX"
+            INSTALLER="$PROTONPREFIX/$INSTALLER_NAME"
         else
             TMP_DIR="$(mktemp -d)" || die "Could not create a temporary directory."
             INSTALLER="$TMP_DIR/$INSTALLER_NAME"
@@ -337,7 +346,7 @@ STATUS=$?
 
 echo ""
 echo "Prefix ready and installer finished."
-echo "  Prefix:  $WINEPREFIX"
+echo "  Prefix:  $PROTONPREFIX"
 echo "  Proton:  $PROTON_BUILD"
 echo "  Game ID: $GAME_ID"
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 #####################################################################################
 # Author: Tempus Thales
-# Version: 0.03
+# Version: 0.04
 # Date: 07/21/2026
 # Description: Install and run seed.game on Linux under Wine.
 #
@@ -16,6 +16,11 @@
 # Source: https://discord.com/channels/284733225753116682/1351162032031924294/1447186146978168852
 #####################################################################################
 # Changelog:
+#
+# 0.04 - 07/22/2026 - Full run logging to a timestamped file in the prefix dir
+#                   - Log opens with an environment header (OS, kernel, wine,
+#                     winetricks versions) for later debugging
+#                   - Added -L to override the log path
 #
 # 0.03 - 07/21/2026 - Searches for an existing seed-launcher.exe before downloading
 #                   - Added -f to force a fresh download
@@ -44,6 +49,7 @@
 set -o pipefail
 
 SCRIPT_NAME="$(basename "$0")"
+SCRIPT_VERSION="0.04"
 
 # Version-agnostic endpoint. Always serves the current stable Windows x64 build,
 # so there is no version string to maintain here.
@@ -54,6 +60,7 @@ INSTALLER_NAME="seed-launcher.exe"
 
 KEEP_INSTALLER=0
 FORCE_DOWNLOAD=0
+LOG_PATH=""
 TMP_DIR=""
 
 usage() {
@@ -77,6 +84,7 @@ Options:
   -k                Keep the downloaded installer in the prefix directory
                     instead of discarding it after the run.
   -f                Force a fresh download, ignoring any local copy.
+  -L <path>         Write the run log to <path> instead of the prefix dir.
   -h, --help, /?    Show this help and exit.
 
 Examples:
@@ -109,11 +117,12 @@ case "$1" in
         ;;
 esac
 
-while getopts ":u:kfh" opt; do
+while getopts ":u:kfL:h" opt; do
     case "$opt" in
         u) SEED_URL="$OPTARG" ;;
         k) KEEP_INSTALLER=1 ;;
         f) FORCE_DOWNLOAD=1 ;;
+        L) LOG_PATH="$OPTARG" ;;
         h) usage; exit 0 ;;
         :) die "Option -$OPTARG requires an argument." ;;
         \?) die "Unknown option: -$OPTARG. Use -h for help." ;;
@@ -140,6 +149,39 @@ WINEPREFIX="$(realpath -m "$PREFIX_ARG")" || die "Could not resolve prefix path:
 
 export WINEPREFIX
 export WINEARCH=win64
+
+# ---- Logging setup ----------------------------------------------------------
+# Capture the full run, script output plus wine/winetricks output, to a
+# timestamped file. tee keeps it on screen while writing to disk. The redirect
+# is placed here, after the prefix path is known, so the log lands in the right
+# spot; everything printed from this point on is captured.
+
+if [ -z "$LOG_PATH" ]; then
+    mkdir -p "$WINEPREFIX" || die "Could not create $WINEPREFIX"
+    LOG_PATH="$WINEPREFIX/install-$(date +%Y%m%d-%H%M%S).log"
+fi
+
+# Header block: the environment details worth having when debugging later.
+{
+    echo "#############################################################"
+    echo "# seed.game Wine install log"
+    echo "# Script:   $SCRIPT_NAME v$SCRIPT_VERSION"
+    echo "# Date:     $(date '+%Y-%m-%d %H:%M:%S %Z')"
+    echo "# Prefix:   $WINEPREFIX"
+    echo "# WINEARCH: ${WINEARCH:-unset}"
+    echo "# OS:       $(if . /etc/os-release 2>/dev/null && [ -n "$PRETTY_NAME" ]; then echo "$PRETTY_NAME"; else uname -s; fi)"
+    echo "# Kernel:   $(uname -r)"
+    echo "# wine:     $(wine --version 2>/dev/null || echo 'unknown')"
+    echo "# winetricks: $(winetricks --version 2>/dev/null | head -1 || echo 'unknown')"
+    echo "#############################################################"
+    echo ""
+} > "$LOG_PATH"
+
+# Route all subsequent stdout and stderr through tee to the log.
+exec > >(tee -a "$LOG_PATH") 2>&1
+
+echo "Logging to: $LOG_PATH"
+echo ""
 
 # ---- Validate an existing prefix --------------------------------------------
 # WINEARCH only applies at creation time. Pointing win64 at an existing 32-bit
